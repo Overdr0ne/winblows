@@ -1,8 +1,8 @@
 ;;; winblows.el --- I got 98 Windows but Word ain't one.   -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Sam
+;; Copyright (C) 2021 Overdr0ne
 
-;; Author: Sam <scmorris.dev@gmail.com>
+;; Author: Overdr0ne <scmorris.dev@gmail.com>
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -24,18 +24,53 @@
 ;; go. Set the wind direction and any window spawned will follow.
 
 ;;; Code:
-
 (require 'cl-lib)
-;; (require 'window)
 
-(defcustom winblows--split-window-below nil
-  "If non-nil, vertical splits produce new windows below."
-  :group 'windows
-  :type 'boolean)
-(defcustom winblows--split-window-right nil
-  "If non-nil, horizontal splits produce new windows to the right."
-  :group 'windows
-  :type 'boolean)
+(defun deftoggle-var-doc (name)
+  (concat "Non-nil if " name " is enabled.\n\n"
+          "See " name
+          " command for a description of this toggle."))
+(defun deftoggle-fun-doc (name doc)
+  (concat "Toggle " name " on or off.\n\n" doc
+          "\n\nIf called interactively, enable Global Gumshoe-Buf mode if ARG is
+positive, and disable it if ARG is zero or negative.  If called
+from Lisp, also enable the mode if ARG is omitted or nil, and
+toggle it if ARG is toggle; disable the mode otherwise.
+
+Interactively with no argument, this command toggles the mode.
+A positive prefix argument enables the mode, any other prefix
+argument disables it.  From Lisp, argument omitted or nil enables
+the mode, toggle toggles the state."))
+(defmacro deftoggle (name doc enabler disabler)
+  `(progn
+     (defvar ,name nil ,(deftoggle-var-doc (symbol-name name)))
+     (defun ,name (&optional enable)
+       ,(deftoggle-fun-doc (symbol-name name) doc)
+       (interactive)
+       (if (called-interactively-p 'interactive)
+           (progn
+             (if ,name
+                 (progn
+                   ,disabler
+                   (message "%s disabled." ',name))
+               ,enabler
+               (message "%s enabled." ',name))
+             (setq ,name (not ,name))
+             )
+         (if enable
+             ,enabler
+           ,disabler)
+         (setq ,name enable)))))
+
+(defvar winblows--dba-stash)
+(defmacro define-winblows-toggle (name doc enabler)
+  "Define toggle for winblows."
+  `(deftoggle ,name
+     ,doc
+     ,enabler
+     (setq display-buffer-alist winblows--dba-stash)))
+(defcustom winblows-auto-display-buffer-alist nil
+  "`display-buffer-alist’ used in `winblows-auto’.")
 
 (defcustom winblows--side-width 80
   "Width of side windows in Winblows.")
@@ -53,60 +88,27 @@
       (select-window w))
     w))
 
-(defun winblows-follow ()
-  (interactive)
-  (advice-add 'display-buffer :around 'winblows--display-buffer-advice))
-(defun winblows-unfollow ()
-  (interactive)
+(deftoggle winblows-follow
+  "Move point to any newly opened windows."
+  (advice-add 'display-buffer :around 'winblows--display-buffer-advice)
   (advice-remove 'display-buffer 'winblows--display-buffer-advice))
+;; (defun winblows-unfollow
+;;   (interactive)
+;;   (advice-remove 'display-buffer 'winblows--display-buffer-advice))
 
-(defun winblows-auto ()
-  (interactive)
-  (setq
-   ;; Default rules
-   display-buffer-alist
-   `(;; Display *Help* buffer at the bottom-most slot
-     ("\\(*\\(info\\|grep*\\|.*systemctl.*\\|Help\\|help\\|helpful\\|trace-\\|Backtrace\\|RefTeX.*\\)\\)"
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-in-side-window)
-      (side . right)
-      (slot . 0)
-      (window-width . 80)
-      (reusable-frames . visible))
-     ("\\(magit-diff\\|shelldon\\)"
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-pop-up-window)
-      (pop-up-frame-parameters
-       (width . 80)
-       (left . 1.0)
-       (fullscreen . fullheight)))
-     ("\\(\\*draft\\*\\|Draft/\\)"
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-pop-up-frame)
-      (pop-up-frame-parameters
-       (width . 80)
-       (left . 1.0)
-       (fullscreen . fullheight)))
-     ;; Display *BBDB* buffer on the bottom frame
-     ("\\*BBDB"
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-in-side-window)
-      (side . bottom)
-      (slot . 0)
-      (window-height . 10)
-      (reusable-frames . visible))
-     ;; Split shells at the bottom
-     ("^\\*e?shell"
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-below-selected)
-      (window-min-height . 20)
-      (reusable-frames . visible))
-     ("magit"
-      (display-buffer-reuse-window display-buffer-same-window)))))
+;; (defun winblows-auto
+;;   (interactive)
+;;   (setq display-buffer-alist winblows-auto-display-buffer-alist))
+
+(defun winblows--swap-in-dba (dba)
+  (setq winblows--dba-stash display-buffer-alist)
+  (setq display-buffer-alist dba))
 
 (defun winblows--cardinal (direction &optional width height)
   (unless width (setq width winblows--side-width))
   (unless height (setq height winblows--side-height))
-  (setq
-   ;; Default rules
-   display-buffer-alist
-   `(;; Display *Help* buffer at the bottom-most slot
-     ("\\*"
+  (winblows--swap-in-dba
+   `(("\\*"
       ;; (display-buffer-in-side-window)
       (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-in-side-window)
       (side . ,direction)
@@ -114,30 +116,23 @@
       (window-width . ,width)
       (window-height . ,height)
       (reusable-frames . visible)))))
-(defun winblows-east ()
-  "Blow window East."
-  (interactive)
+(define-winblows-toggle winblows-east
+  "Blow new windows East."
   (winblows--cardinal 'right))
-(defun winblows-west ()
-  "Blow window West."
-  (interactive)
+(define-winblows-toggle winblows-west
+  "Blow new windows West."
   (winblows--cardinal 'left))
-(defun winblows-north ()
-  "Blow window North."
-  (interactive)
+(define-winblows-toggle winblows-north
+  "Blow new windows North."
   (winblows--cardinal 'top))
-(defun winblows-south ()
-  "Blow window South."
-  (interactive)
+(define-winblows-toggle winblows-south
+  "Blow new windows South."
   (winblows--cardinal 'bottom nil winblows--side-height))
 
-(defun winblows-here ()
-  (interactive)
-  (setq
-   ;; Default rules
-   display-buffer-alist
-   `(;; Display *Help* buffer at the bottom-most slot
-     ("\\*"
+(define-winblows-toggle winblows-here
+  "Blow new windows to current window."
+  (winblows--swap-in-dba
+   `(("\\*"
       (display-buffer-same-window)))))
 (defun winblows-display-buffer-other-window (buffer alist)
   "Display buffer BUF in another window."
@@ -146,23 +141,62 @@
 	      (window-dedicated-p))
     (other-window 1)
     (window--display-buffer buffer (selected-window) 'reuse)))
-(defun winblows-there ()
-  (interactive)
-  (setq
-   ;; Default rules
-   display-buffer-alist
-   `(;; Display *Help* buffer at the bottom-most slot
-     ("\\*"
-      (winblows-display-buffer-other-window)))))
-(defun winblows-full ()
-  (interactive)
-  (setq
-   ;; Default rules
-   display-buffer-alist
-   `(;; Display *Help* buffer at the bottom-most slot
-     ("\\*"
+(define-winblows-toggle winblows-there
+  "Blow new windows to other window."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (winblows-display-buffer-other-window display-buffer-pop-up-window)
+      (inhibit-same-window)
+      ))))
+(define-winblows-toggle winblows-full
+  "Blow new windows up fullscreen."
+  (winblows--swap-in-dba
+   `(("\\*"
       (display-buffer-same-window)
       (fullscreen . fullheight)))))
+
+(define-winblows-toggle winblows-right
+  "Blow new windows right."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-in-direction display-buffer-pop-up-window)
+      (inhibit-same-window)
+      (direction . right)))))
+(define-winblows-toggle winblows-left
+  "Blow new windows left."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-in-direction)
+      (inhibit-same-window)
+      (direction . left)))))
+(define-winblows-toggle winblows-up
+  "Blow new windows up."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-in-direction)
+      (inhibit-same-window)
+      (direction . up)))))
+(define-winblows-toggle winblows-down
+  "Blow new windows down."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-in-direction)
+      (inhibit-same-window)
+      (direction . down)))))
+
+(define-winblows-toggle winblows-pop-up
+  "Spawn new windows circularly, but keep them at least 80 characters."
+  ;; (fset #'split-window-sensibly #'winblows--split-window-sensibly)
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-pop-up-window)))))
+
+(define-winblows-toggle winblows-cycle
+  "Blow new windows to adjascent slot."
+  (winblows--swap-in-dba
+   `(("\\*"
+      (display-buffer-use-some-window display-buffer-pop-up-window)
+      (inhibit-same-window)))))
 
 (define-minor-mode global-winblows-mode
   "Winblows blows your windows.
@@ -173,7 +207,10 @@ window spawned will follow.
   :init-value nil
   :lighter " Winblows"
   ;; :group 'winblows
-  :global t)
+  :global t
+  (if global-winblows-mode
+      (setq winblows--user-display-buffer-alist display-buffer-alist)
+    (setq display-buffer-alist winblows--user-display-buffer-alist)))
 
 (provide 'winblows)
 ;;; winblows.el ends here

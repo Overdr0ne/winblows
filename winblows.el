@@ -26,6 +26,11 @@
 ;;; Code:
 (require 'cl-lib)
 
+(defgroup winblows nil
+  "Winblows blows your windows."
+  :group 'convenience
+  :prefix "winblows-")
+
 (defun deftoggle-var-doc (name)
   (concat "Non-nil if " name " is enabled.\n\n"
           "See " name
@@ -50,34 +55,27 @@ the mode, toggle toggles the state."))
        (if (called-interactively-p 'interactive)
            (progn
              (if ,name
-                 (progn
-                   ,disabler
-                   (message "%s disabled." ',name))
+                 ,disabler
+               ,enabler)
+             (setq ,name (not ,name)))
+         (progn
+           (if enable
                ,enabler
-               (message "%s enabled." ',name))
-             (setq ,name (not ,name))
-             )
-         (if enable
-             ,enabler
-           ,disabler)
-         (setq ,name enable)))))
+             ,disabler)
+           (setq ,name enable))))))
 
 (defvar winblows--dba-stash)
-(defmacro define-winblows-toggle (name doc enabler)
-  "Define toggle for winblows."
-  `(deftoggle ,name
-     ,doc
-     ,enabler
-     (setq display-buffer-alist winblows--dba-stash)))
 (defcustom winblows-auto-display-buffer-alist nil
-  "`display-buffer-alist’ used in `winblows-auto’.")
+  "`display-buffer-alist’ used in `winblows-auto’."
+  :type 'alist)
 
 (defcustom winblows--side-width 80
-  "Width of side windows in Winblows.")
+  "Width of side windows in Winblows."
+  :type 'integer)
 (defcustom winblows--side-height 10
-  "Height of side windows in Winblows.")
+  "Height of side windows in Winblows."
+  :type 'integer)
 
-;; https://www.reddit.com/r/emacs/comments/aepvwq/how_to_automatically_switch_focus_to_newly/edsvalc?utm_source=share&utm_medium=web2x&context=3
 (defvar winblows--display-buffers-no-select '("*Completions*"))
 
 (defun winblows--display-buffer-advice (f &rest args)
@@ -88,6 +86,7 @@ the mode, toggle toggles the state."))
       (select-window w))
     w))
 
+;; https://www.reddit.com/r/emacs/comments/aepvwq/how_to_automatically_switch_focus_to_newly/edsvalc?utm_source=share&utm_medium=web2x&context=3
 (deftoggle winblows-follow
   "Move point to any newly opened windows."
   (advice-add 'display-buffer :around 'winblows--display-buffer-advice)
@@ -104,97 +103,114 @@ the mode, toggle toggles the state."))
   (setq winblows--dba-stash display-buffer-alist)
   (setq display-buffer-alist dba))
 
-(defun winblows--cardinal (direction &optional width height)
-  (unless width (setq width winblows--side-width))
-  (unless height (setq height winblows--side-height))
+(defun winblows-stop ()
+  (interactive)
+  (setf display-buffer-alist winblows--user-display-buffer-alist))
+(defun winblows--cardinal (direction width height)
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       ;; (display-buffer-in-side-window)
-      (display-buffer-reuse-window display-buffer-in-previous-window display-buffer-in-side-window)
+      (display-buffer-in-side-window)
       (side . ,direction)
       (slot . 0)
       (window-width . ,width)
       (window-height . ,height)
       (reusable-frames . visible)))))
-(define-winblows-toggle winblows-east
+(defvar winblows--current nil)
+(defvar winblowingp nil)
+(defun winblows--blowing-p (dir)
+  (equal winblows--current dir))
+(defvar winblows--user-display-buffer-alist display-buffer-alist)
+(defmacro define-winblows-cmd (name doc blower)
+  `(progn
+     (defun ,name ()
+       ,doc
+       (interactive)
+       (cond ((and winblowingp (equal winblows--current this-command))
+              (winblows-stop)
+              (message "%s disabled." ',name))
+             (t ,blower
+                (message "%s enabled." ',name)
+                (setf winblowingp t)))
+       (setq winblows--current this-command))))
+(define-winblows-cmd winblows-east
   "Blow new windows East."
-  (winblows--cardinal 'right))
-(define-winblows-toggle winblows-west
+  (winblows--cardinal 'right winblows--side-width nil))
+(define-winblows-cmd winblows-west
   "Blow new windows West."
-  (winblows--cardinal 'left))
-(define-winblows-toggle winblows-north
+  (winblows--cardinal 'left winblows--side-width nil))
+(define-winblows-cmd winblows-north
   "Blow new windows North."
-  (winblows--cardinal 'top))
-(define-winblows-toggle winblows-south
+  (winblows--cardinal 'top nil winblows--side-height))
+(define-winblows-cmd winblows-south
   "Blow new windows South."
   (winblows--cardinal 'bottom nil winblows--side-height))
 
-(define-winblows-toggle winblows-here
+(define-winblows-cmd winblows-here
   "Blow new windows to current window."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-same-window)))))
 (defun winblows-display-buffer-other-window (buffer alist)
-  "Display buffer BUF in another window."
+  "Display buffer BUFFER in another window."
   (unless (or (cdr (assq 'inhibit-same-window alist))
 	      (window-minibuffer-p)
 	      (window-dedicated-p))
     (other-window 1)
     (window--display-buffer buffer (selected-window) 'reuse)))
-(define-winblows-toggle winblows-there
+(define-winblows-cmd winblows-there
   "Blow new windows to other window."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (winblows-display-buffer-other-window display-buffer-pop-up-window)
-      (inhibit-same-window)
-      ))))
-(define-winblows-toggle winblows-full
+      (inhibit-same-window)))))
+(define-winblows-cmd winblows-full
   "Blow new windows up fullscreen."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-same-window)
       (fullscreen . fullheight)))))
 
-(define-winblows-toggle winblows-right
+(define-winblows-cmd winblows-right
   "Blow new windows right."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-in-direction display-buffer-pop-up-window)
       (inhibit-same-window)
       (direction . right)))))
-(define-winblows-toggle winblows-left
+(define-winblows-cmd winblows-left
   "Blow new windows left."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-in-direction)
       (inhibit-same-window)
       (direction . left)))))
-(define-winblows-toggle winblows-up
+(define-winblows-cmd winblows-up
   "Blow new windows up."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-in-direction)
       (inhibit-same-window)
       (direction . up)))))
-(define-winblows-toggle winblows-down
+(define-winblows-cmd winblows-down
   "Blow new windows down."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-in-direction)
       (inhibit-same-window)
       (direction . down)))))
 
-(define-winblows-toggle winblows-pop-up
+(define-winblows-cmd winblows-pop-up
   "Spawn new windows circularly, but keep them at least 80 characters."
   ;; (fset #'split-window-sensibly #'winblows--split-window-sensibly)
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-pop-up-window)))))
 
-(define-winblows-toggle winblows-cycle
+(define-winblows-cmd winblows-cycle
   "Blow new windows to adjascent slot."
   (winblows--swap-in-dba
-   `(("\\*"
+   `((""
       (display-buffer-use-some-window display-buffer-pop-up-window)
       (inhibit-same-window)))))
 

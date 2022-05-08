@@ -32,37 +32,38 @@
   :prefix "winblows-")
 
 (defun deftoggle-var-doc (name)
+  "Generate documentation for toggle with NAME."
   (concat "Non-nil if " name " is enabled.\n\n"
           "See " name
           " command for a description of this toggle."))
+
 (defun deftoggle-fun-doc (name doc)
+  "Generate DOC for toggle with NAME."
   (concat "Toggle " name " on or off.\n\n" doc
           "\n\nIf called interactively, enable Global Gumshoe-Buf mode if ARG is
 positive, and disable it if ARG is zero or negative.  If called
 from Lisp, also enable the mode if ARG is omitted or nil, and
-toggle it if ARG is toggle; disable the mode otherwise.
+toggle it if ARG is toggle, disable the mode otherwise.
 
 Interactively with no argument, this command toggles the mode.
 A positive prefix argument enables the mode, any other prefix
 argument disables it.  From Lisp, argument omitted or nil enables
 the mode, toggle toggles the state."))
+
 (defmacro deftoggle (name doc enabler disabler)
+  "Define a toggle with NAME & DOC using ENABLER & DISABLER funcitons."
   `(progn
      (defvar ,name nil ,(deftoggle-var-doc (symbol-name name)))
-     (defun ,name (&optional enable)
+     (defun ,name ()
        ,(deftoggle-fun-doc (symbol-name name) doc)
        (interactive)
-       (if (called-interactively-p 'interactive)
-           (progn
-             (if ,name
-                 ,disabler
-               ,enabler)
-             (setq ,name (not ,name)))
-         (progn
-           (if enable
-               ,enabler
-             ,disabler)
-           (setq ,name enable))))))
+       (if ,name
+	   (progn ,disabler
+		  (setf ,name nil)
+		  (message (concat "Toggle: " ,(symbol-name name) " disabled.")))
+	 ,enabler
+	 (setf ,name 1)
+	 (message (concat "Toggle: " ,(symbol-name name) " enabled."))))))
 
 (defvar winblows--dba-stash)
 (defcustom winblows-auto-display-buffer-alist nil
